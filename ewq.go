@@ -21,7 +21,7 @@ type Config struct {
 	BaseWorkerNum 			int64
 	// Unit: MS
 	ScheduleIntervalMS 		int64
-	ElasticIntervalMS		int64
+	ElasticIntervalS		int64
 }
 
 type WorkerInitialize	func() interface{}
@@ -63,7 +63,7 @@ func NewEWQ(config Config, handler Handler) (*EWQ, error) {
 		config.MaxWorkerNum <= 0 ||
 		config.BaseWorkerNum <= 0 ||
 		config.ScheduleIntervalMS <= 0 ||
-		config.ElasticIntervalMS <= 0 ||
+		config.ElasticIntervalS <= 0 ||
 		handler.Initializer == nil ||
 		handler.Work == nil ||
 		handler.Cleanup == nil {
@@ -72,7 +72,7 @@ func NewEWQ(config Config, handler Handler) (*EWQ, error) {
 
 	if config.AlertRequestQueueLen > config.MaxRequestQueueLen ||
 		config.BaseWorkerNum > config.MaxWorkerNum ||
-		config.ScheduleIntervalMS > config.ElasticIntervalMS {
+		config.ScheduleIntervalMS >= 1000 {
 		return nil, errors.New("restrict violation")
 	}
 
@@ -207,10 +207,15 @@ func (q *EWQ) idleWorkerCloser() {
 	q.log("IdleWorkerCloser Start")
 
 	interval, _ := time.ParseDuration(fmt.Sprintf("%dms", q.config.ScheduleIntervalMS))
-	//elasticInterval := time.ParseDuration(fmt.Sprintf("%dms", q.config.ElasticIntervalMS))
+	//elasticInterval, _ := time.ParseDuration(fmt.Sprintf("%dms", q.config.ElasticIntervalS))
 	highLevelTime := time.Now()
 	tenSeconds, _ := time.ParseDuration("10s")
     q.log(fmt.Sprintf("ScheduleInterval:%s, TotalInterval:%s\n", interval, tenSeconds))
+
+    maxInOneSecond := int64(0)
+    markTimeSecond := highLevelTime.Second()
+    maxInElasticInterval := int64(0)
+    lastCloseTime := highLevelTime.Unix()
 
 	LOOP:
 	for {
@@ -218,22 +223,46 @@ func (q *EWQ) idleWorkerCloser() {
 		case <- q.closeSignal:
 			break LOOP
 		case <- time.After(interval):
+			processRequest := q.countProcessingRequest
+			now := time.Now()
+
 			if int64(len(q.requestQueue)) > q.config.AlertRequestQueueLen {
-				highLevelTime = time.Now()
+				highLevelTime = now
+
+				maxInOneSecond = processRequest
+				markTimeSecond = now.Second()
+				maxInElasticInterval = processRequest
+				lastCloseTime = now.Unix()
+
 			    continue
 			}
 
-			if q.countTargetWorker > q.config.BaseWorkerNum && highLevelTime.Add(tenSeconds).Before(time.Now()) {
-				closeCount := (q.config.MaxWorkerNum - q.config.BaseWorkerNum) / 30
-				if closeCount >= q.countTargetWorker - q.config.BaseWorkerNum {
-					closeCount = q.countTargetWorker - q.config.BaseWorkerNum
+			if now.Unix() - lastCloseTime >= q.config.ElasticIntervalS {
+				if maxInElasticInterval < q.countTargetWorker - q.config.BaseWorkerNum {
+					closeNum := q.countTargetWorker - q.config.BaseWorkerNum - maxInElasticInterval
+					if closeNum > q.config.BaseWorkerNum {
+						closeNum = q.config.BaseWorkerNum
+					}
+                    atomic.AddInt64(&(q.countTargetWorker), -closeNum)
+					q.log(fmt.Sprintf("close worker, num:%d, max:%d, target:%d, active:%d", closeNum, maxInElasticInterval, q.countTargetWorker, q.countActiveWorker))
+					for idx := int64(0); idx < closeNum; idx += 1 {
+						q.exitToken <- true
+					}
 				}
-				q.log(fmt.Sprintf("Close Worker, Num:%d", closeCount))
-			    atomic.AddInt64(&(q.countTargetWorker), -closeCount)
-				for count := int64(0); count < closeCount; count += 1 {
-					q.exitToken <- true
+				maxInOneSecond = processRequest
+				maxInElasticInterval = processRequest
+				lastCloseTime = now.Unix()
+			} else {
+				if now.Second() == markTimeSecond {
+					if processRequest > maxInOneSecond {
+						maxInOneSecond = processRequest
+					}
+				} else {
+					if maxInOneSecond > maxInElasticInterval {
+						maxInElasticInterval = maxInOneSecond
+					}
+					maxInOneSecond = processRequest
 				}
-                highLevelTime = time.Now()
 			}
         }
 	}

@@ -14,7 +14,7 @@ func main() {
     addr := "127.0.0.1:8000"
 
     interval, _ := time.ParseDuration("100ms")
-    requestNum := 1000
+    requestNum := 200
     loop_idx := 0
     interval_100ms, _ := time.ParseDuration("100ms")
 

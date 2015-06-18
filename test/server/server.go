@@ -53,9 +53,9 @@ func main() {
 		MaxRequestQueueLen:		800,
 		AlertRequestQueueLen: 	100,
 		MaxWorkerNum:			1000,
-		BaseWorkerNum:			50,
-		ScheduleIntervalMS:		30,
-		ElasticIntervalMS:		300,
+		BaseWorkerNum:			100,
+		ScheduleIntervalMS:		50,
+		ElasticIntervalS:		60,
 	}
 
 	handler := ewq.Handler{
