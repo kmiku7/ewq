@@ -28,10 +28,10 @@ func work(context interface{}, q *ewq.EWQ, requestQueue <-chan *ewq.RequestHolde
 	case <- exitSignal:
 		return
 	case req_holder := <- requestQueue:
-		req := req_holder.GetRequest().(Request)
+		req := req_holder.GetRequest().(*Request)
 		sleep_time := rand.Int31n(50)
 		interval, _ := time.ParseDuration(fmt.Sprintf("%dms", sleep_time))
-		fmt.Printf("SLEEP:%dms, REQ:%s\n", sleep_time, req.info)
+		fmt.Printf("Time:%s SLEEP:%dms, REQ:%s\n", time.Now(), sleep_time, req.info)
 		time.Sleep(interval)
 	}
 	}
@@ -51,7 +51,7 @@ func main() {
 
 	config := ewq.Config{
 		MaxRequestQueueLen:		800,
-		AlertRequestQueueLen: 	30,
+		AlertRequestQueueLen: 	100,
 		MaxWorkerNum:			1000,
 		BaseWorkerNum:			50,
 		ScheduleIntervalMS:		30,
@@ -84,7 +84,7 @@ func main() {
 		// multiple connections may be served concurrently.
 		go func(c net.Conn) {
 			data, err := ioutil.ReadAll(c)
-			fmt.Printf("err:%v", err)
+			fmt.Printf("err:%v\n", err)
 			req := &Request{
 				info: string(data),
 			}

@@ -117,6 +117,7 @@ func (q *EWQ) PushRequest(request interface{}, reqId string) error {
 	}
 
 	if int64(len(q.requestQueue)) > q.config.AlertRequestQueueLen {
+        q.log(fmt.Sprintf("Reach Alert Level:%d\n", len(q.requestQueue)))
 		for count := 0; count < 2; count += 1 {
 			select {
 			case q.createToken <- true:
@@ -198,7 +199,7 @@ func (q *EWQ) workerMonitor() {
     }
 	}
 
-	q.log("Worker Monitor Start")
+	q.log("Worker Monitor Exit")
 }
 
 func (q *EWQ) idleWorkerCloser() {
@@ -209,6 +210,7 @@ func (q *EWQ) idleWorkerCloser() {
 	//elasticInterval := time.ParseDuration(fmt.Sprintf("%dms", q.config.ElasticIntervalMS))
 	highLevelTime := time.Now()
 	tenSeconds, _ := time.ParseDuration("10s")
+    q.log(fmt.Sprintf("ScheduleInterval:%s, TotalInterval:%s\n", interval, tenSeconds))
 
 	LOOP:
 	for {
@@ -218,18 +220,20 @@ func (q *EWQ) idleWorkerCloser() {
 		case <- time.After(interval):
 			if int64(len(q.requestQueue)) > q.config.AlertRequestQueueLen {
 				highLevelTime = time.Now()
+			    continue
 			}
-			continue
 
 			if q.countTargetWorker > q.config.BaseWorkerNum && highLevelTime.Add(tenSeconds).Before(time.Now()) {
 				closeCount := (q.config.MaxWorkerNum - q.config.BaseWorkerNum) / 30
-				if closeCount < q.countTargetWorker - q.config.BaseWorkerNum {
+				if closeCount >= q.countTargetWorker - q.config.BaseWorkerNum {
 					closeCount = q.countTargetWorker - q.config.BaseWorkerNum
 				}
 				q.log(fmt.Sprintf("Close Worker, Num:%d", closeCount))
+			    atomic.AddInt64(&(q.countTargetWorker), -closeCount)
 				for count := int64(0); count < closeCount; count += 1 {
-					q.closeSignal <- true
+					q.exitToken <- true
 				}
+                highLevelTime = time.Now()
 			}
         }
 	}
@@ -259,7 +263,7 @@ func (q *EWQ) sendCloseToken() {
 
 	activeWorkerNum := q.countActiveWorker
 	for idx := int64(0); idx < activeWorkerNum; idx += 1 {
-		q.closeSignal <- true
+		q.exitToken <- true
 	}
 }
 
